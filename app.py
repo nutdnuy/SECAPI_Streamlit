@@ -43,11 +43,30 @@ def load_funds() -> pd.DataFrame:
     return pd.read_csv(FUNDS_CSV)
 
 
-def _base_abbr(name: str) -> str:
-    """Strip share-class suffix like '(A)', '(D)', '(ACC)' from fund abbr."""
+def _strip_class_suffix(name: str) -> str:
+    """Strip share-class suffix from fund abbr or name.
+
+    Handles three patterns:
+    1. Parentheses:    K-GA-A(A), K-GA-A(D)              → K-GA-A
+    2. Trailing caps:  K-GB1YAB, K-GB1YAC, K-GB1YAD      → K-GB1Y
+    3. Thai suffix:    "...1 ปี AB" / "...1 ปี AD"       → "...1 ปี"
+    """
     if not isinstance(name, str):
         return ""
-    return re.sub(r"\s*\([^)]+\)\s*$", "", name).strip()
+    s = name.strip()
+    s = re.sub(r"\s*\([^)]+\)\s*$", "", s)        # (A), (D), (ACC) ...
+    s = re.sub(r"\s+[A-Z]{1,3}\s*$", "", s)        # " AB", " AD", " ACC" (Thai/spaced)
+    s = re.sub(r"(?<=[a-z0-9])[A-Z]{1,3}\s*$", "", s)  # K-GB1YAB → K-GB1Y
+    return s.strip()
+
+
+def _group_key(row) -> str:
+    """Build a dedup key from Thai name → English name → abbr (whichever first non-empty)."""
+    for col in ("proj_name_th", "proj_name_en", "proj_abbr_name"):
+        val = row.get(col)
+        if isinstance(val, str) and val.strip():
+            return _strip_class_suffix(val).lower()
+    return str(row.get("proj_id", ""))
 
 
 def _proj_id_inception(proj_id: str) -> date:
@@ -141,16 +160,26 @@ if sub.empty:
     st.info("ไม่พบกองทุน")
     st.stop()
 
-sub["base_abbr"] = sub["proj_abbr_name"].apply(_base_abbr)
-# pick first proj_id per base_abbr (representative class) — keep alphabetical share class
-sub = sub.sort_values(["base_abbr", "proj_abbr_name"]).reset_index(drop=True)
-unique_funds = sub.groupby("base_abbr", as_index=False).first()
-unique_funds = unique_funds.sort_values("base_abbr").reset_index(drop=True)
+show_all_classes = st.checkbox(
+    "แสดงทุก share class (ไม่ยุบรวม)",
+    value=False,
+    help="ปกติจะรวม share class ของกองเดียวกันให้เหลือ 1 แถว · ติ๊กถ้าอยากเลือก class แยกเอง",
+)
+
+sub = sub.copy()
+sub["_group_key"] = sub.apply(_group_key, axis=1)
+sub = sub.sort_values(["_group_key", "proj_abbr_name"]).reset_index(drop=True)
+
+if show_all_classes:
+    display_funds = sub
+else:
+    display_funds = sub.groupby("_group_key", as_index=False).first()
+display_funds = display_funds.sort_values("proj_abbr_name").reset_index(drop=True)
 
 fund_options: dict[str, str] = {}
-for _, r in unique_funds.iterrows():
+for _, r in display_funds.iterrows():
     name = r["proj_name_th"] or r["proj_name_en"] or ""
-    label = f"{r['base_abbr']} — {name}"
+    label = f"{r['proj_abbr_name']} — {name}"
     fund_options[label] = r["proj_id"]
 
 fund_labels = list(fund_options.keys())
