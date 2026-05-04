@@ -241,7 +241,7 @@ with tab_nav:
     with d3:
         st.write("")
         st.write("")
-        fetch_nav = st.button("⬇️ โหลด NAV", type="primary", use_container_width=True)
+        fetch_nav = st.button("⬇️ โหลด NAV", type="primary", width="stretch")
 
     actual_start = default_start if not custom else start
 
@@ -276,7 +276,7 @@ with tab_nav:
                     st.line_chart(chart_df, height=360)
                     nav_df = nav_df.drop(columns=["_series"])
 
-                st.dataframe(nav_df, use_container_width=True, height=420)
+                st.dataframe(nav_df, width="stretch", height=420)
 
                 buf = io.StringIO()
                 nav_df.to_csv(buf, index=False)
@@ -286,7 +286,7 @@ with tab_nav:
                     data=buf.getvalue(),
                     file_name=fname,
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
 with tab_perf:
@@ -310,7 +310,7 @@ with tab_perf:
         else:
             perf_df = pd.concat(all_perf, ignore_index=True)
             st.success(f"พบข้อมูล {len(perf_df):,} แถว · {perf_df['proj_id'].nunique()} กอง")
-            st.dataframe(perf_df, use_container_width=True, height=480)
+            st.dataframe(perf_df, width="stretch", height=480)
 
             buf = io.StringIO()
             perf_df.to_csv(buf, index=False)
@@ -319,5 +319,5 @@ with tab_perf:
                 data=buf.getvalue(),
                 file_name=f"PERF_{len(selected_proj_ids)}funds.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
