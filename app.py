@@ -154,12 +154,30 @@ for _, r in unique_funds.iterrows():
     fund_options[label] = r["proj_id"]
 
 fund_labels = list(fund_options.keys())
+
+# 🔍 Search box — filter options by abbr / Thai / English name
+search_query = st.text_input(
+    "🔍 ค้นหากองทุน (พิมพ์ชื่อย่อ หรือชื่อเต็ม ภาษาไทย/อังกฤษ)",
+    placeholder="เช่น K-GA, SCBS&P500, กรุงศรี, infrastructure...",
+    key="fund_search",
+).strip().lower()
+
+if search_query:
+    filtered_labels = [lbl for lbl in fund_labels if search_query in lbl.lower()]
+else:
+    filtered_labels = fund_labels
+
+# Keep currently selected items visible even when filtered out
+currently_selected = st.session_state.get("fund_multi", [])
+visible_labels = list(dict.fromkeys(filtered_labels + [s for s in currently_selected if s in fund_options]))
+
 selected_labels = st.multiselect(
-    f"2️⃣ เลือกกองทุน (เลือกได้หลายกอง · มี {len(fund_options):,} กอง · ยุบรวม share class แล้ว)",
-    fund_labels,
-    default=fund_labels[:1] if fund_labels else [],
+    f"2️⃣ เลือกกองทุน · ทั้งหมด {len(fund_options):,} กอง · แสดง {len(filtered_labels):,} กอง",
+    visible_labels,
+    default=fund_labels[:1] if (fund_labels and "fund_multi" not in st.session_state) else None,
+    key="fund_multi",
 )
-selected_proj_ids = [fund_options[lbl] for lbl in selected_labels]
+selected_proj_ids = [fund_options[lbl] for lbl in selected_labels if lbl in fund_options]
 
 if not selected_proj_ids:
     st.info("เลือกกองทุนอย่างน้อย 1 กอง")
