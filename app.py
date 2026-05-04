@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from pathlib import Path
@@ -18,6 +19,8 @@ TIMEOUT = 30
 HERE = Path(__file__).parent
 AMC_CSV = HERE / "amc.csv"
 FUNDS_CSV = HERE / "funds.csv"
+ALL_AMC = "🌐 ทุก บลจ."
+INCEPTION_FALLBACK = date(2000, 1, 1)
 
 
 def _get_json(url: str, key: str):
@@ -38,6 +41,26 @@ def load_amc() -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def load_funds() -> pd.DataFrame:
     return pd.read_csv(FUNDS_CSV)
+
+
+def _base_abbr(name: str) -> str:
+    """Strip share-class suffix like '(A)', '(D)', '(ACC)' from fund abbr."""
+    if not isinstance(name, str):
+        return ""
+    return re.sub(r"\s*\([^)]+\)\s*$", "", name).strip()
+
+
+def _proj_id_inception(proj_id: str) -> date:
+    """Parse start year from proj_id like 'M0746_2550' → 2007-01-01."""
+    m = re.search(r"_(\d{4})$", str(proj_id))
+    if not m:
+        return INCEPTION_FALLBACK
+    year_be = int(m.group(1))
+    year_ce = year_be - 543 if year_be > 2400 else year_be
+    try:
+        return date(year_ce, 1, 1)
+    except ValueError:
+        return INCEPTION_FALLBACK
 
 
 def _fetch_one_nav(proj_id: str, d: date):
@@ -97,35 +120,46 @@ if not AMC_CSV.exists() or not FUNDS_CSV.exists():
     st.stop()
 
 amc_df = load_amc()
-funds_df = load_funds()
+funds_df = load_funds().copy()
 
 amc_label_col = "name_th" if "name_th" in amc_df.columns else amc_df.columns[0]
 amc_df = amc_df.sort_values(amc_label_col).reset_index(drop=True)
-amc_options = {row[amc_label_col]: row["unique_id"] for _, row in amc_df.iterrows()}
+amc_options = {ALL_AMC: None}
+amc_options.update({row[amc_label_col]: row["unique_id"] for _, row in amc_df.iterrows()})
 
-c1, c2 = st.columns([1, 2])
-with c1:
-    amc_choice = st.selectbox(f"1️⃣ เลือก บลจ ({len(amc_options)} แห่ง)", list(amc_options.keys()))
-    unique_id = amc_options[amc_choice]
+# --- 1️⃣ AMC selector (full width) ---
+amc_choice = st.selectbox(f"1️⃣ เลือก บลจ ({len(amc_df)} แห่ง)", list(amc_options.keys()))
+unique_id = amc_options[amc_choice]
 
-with c2:
+# --- 2️⃣ Fund selector (full width, deduped by base abbr) ---
+if unique_id is None:
+    sub = funds_df.copy()
+else:
     sub = funds_df[funds_df["amc_unique_id"] == unique_id].copy()
-    sub = sub.sort_values("proj_abbr_name").reset_index(drop=True)
-    if sub.empty:
-        st.info("ไม่พบกองทุนของ บลจ นี้")
-        st.stop()
 
-    fund_options = {
-        f"{r['proj_abbr_name']} — {r['proj_name_th'] or r['proj_name_en'] or ''}": r["proj_id"]
-        for _, r in sub.iterrows()
-    }
-    fund_labels = list(fund_options.keys())
-    selected_labels = st.multiselect(
-        f"2️⃣ เลือกกองทุน (เลือกได้หลายกอง · มีทั้งหมด {len(fund_options)} กอง)",
-        fund_labels,
-        default=fund_labels[:1],
-    )
-    selected_proj_ids = [fund_options[lbl] for lbl in selected_labels]
+if sub.empty:
+    st.info("ไม่พบกองทุน")
+    st.stop()
+
+sub["base_abbr"] = sub["proj_abbr_name"].apply(_base_abbr)
+# pick first proj_id per base_abbr (representative class) — keep alphabetical share class
+sub = sub.sort_values(["base_abbr", "proj_abbr_name"]).reset_index(drop=True)
+unique_funds = sub.groupby("base_abbr", as_index=False).first()
+unique_funds = unique_funds.sort_values("base_abbr").reset_index(drop=True)
+
+fund_options: dict[str, str] = {}
+for _, r in unique_funds.iterrows():
+    name = r["proj_name_th"] or r["proj_name_en"] or ""
+    label = f"{r['base_abbr']} — {name}"
+    fund_options[label] = r["proj_id"]
+
+fund_labels = list(fund_options.keys())
+selected_labels = st.multiselect(
+    f"2️⃣ เลือกกองทุน (เลือกได้หลายกอง · มี {len(fund_options):,} กอง · ยุบรวม share class แล้ว)",
+    fund_labels,
+    default=fund_labels[:1] if fund_labels else [],
+)
+selected_proj_ids = [fund_options[lbl] for lbl in selected_labels]
 
 if not selected_proj_ids:
     st.info("เลือกกองทุนอย่างน้อย 1 กอง")
@@ -138,10 +172,25 @@ tab_nav, tab_perf = st.tabs(["📈 NAV รายวัน", "📊 Performance"])
 
 with tab_nav:
     today = date.today()
-    default_start = today - timedelta(days=180)
+    inception_dates = [_proj_id_inception(pid) for pid in selected_proj_ids]
+    earliest_inception = min(inception_dates) if inception_dates else INCEPTION_FALLBACK
+
+    use_inception = st.checkbox(
+        f"📅 ตั้งแต่เริ่มกองทุน (≈ {earliest_inception})",
+        value=False,
+        help="ดึงตั้งแต่ปีที่กองทุนเริ่ม (อ่านจาก proj_id) — อาจดึงนาน",
+    )
+
     d1, d2, d3 = st.columns([1, 1, 1])
+    default_start = earliest_inception if use_inception else today - timedelta(days=180)
     with d1:
-        start = st.date_input("เริ่ม", value=default_start, max_value=today, key="nav_start")
+        start = st.date_input(
+            "เริ่ม",
+            value=default_start,
+            max_value=today,
+            key=f"nav_start_{use_inception}",
+            disabled=use_inception,
+        )
     with d2:
         end = st.date_input("ถึง", value=today, max_value=today, key="nav_end")
     with d3:
@@ -149,13 +198,20 @@ with tab_nav:
         st.write("")
         fetch_nav = st.button("⬇️ โหลด NAV", type="primary", use_container_width=True)
 
+    actual_start = earliest_inception if use_inception else start
+
     if fetch_nav:
-        if start > end:
+        if actual_start > end:
             st.error("วันที่เริ่มต้องไม่หลังวันที่สิ้นสุด")
         else:
+            days_count = (end - actual_start).days
+            if days_count > 365 * 5:
+                st.warning(
+                    f"ช่วงนี้ยาว {days_count:,} วัน (~{days_count // 365} ปี) — อาจใช้เวลาดึงนาน"
+                )
             prog = st.progress(0.0, text="เริ่มดึง NAV...")
             try:
-                nav_df = fetch_nav_multi(selected_proj_ids, start, end, progress=prog)
+                nav_df = fetch_nav_multi(selected_proj_ids, actual_start, end, progress=prog)
             except Exception as exc:
                 st.error(str(exc))
                 nav_df = pd.DataFrame()
@@ -179,7 +235,7 @@ with tab_nav:
 
                 buf = io.StringIO()
                 nav_df.to_csv(buf, index=False)
-                fname = f"NAV_{len(selected_proj_ids)}funds_{start}_{end}.csv"
+                fname = f"NAV_{len(selected_proj_ids)}funds_{actual_start}_{end}.csv"
                 st.download_button(
                     "💾 ดาวน์โหลด CSV",
                     data=buf.getvalue(),
