@@ -155,27 +155,12 @@ for _, r in unique_funds.iterrows():
 
 fund_labels = list(fund_options.keys())
 
-# 🔍 Search box — filter options by abbr / Thai / English name
-search_query = st.text_input(
-    "🔍 ค้นหากองทุน (พิมพ์ชื่อย่อ หรือชื่อเต็ม ภาษาไทย/อังกฤษ)",
-    placeholder="เช่น K-GA, SCBS&P500, กรุงศรี, infrastructure...",
-    key="fund_search",
-).strip().lower()
-
-if search_query:
-    filtered_labels = [lbl for lbl in fund_labels if search_query in lbl.lower()]
-else:
-    filtered_labels = fund_labels
-
-# Keep currently selected items visible even when filtered out
-currently_selected = st.session_state.get("fund_multi", [])
-visible_labels = list(dict.fromkeys(filtered_labels + [s for s in currently_selected if s in fund_options]))
-
 selected_labels = st.multiselect(
-    f"2️⃣ เลือกกองทุน · ทั้งหมด {len(fund_options):,} กอง · แสดง {len(filtered_labels):,} กอง",
-    visible_labels,
+    f"2️⃣ เลือกกองทุน · พิมพ์ชื่อย่อหรือชื่อเต็มเพื่อค้นหา · มี {len(fund_options):,} กอง",
+    fund_labels,
     default=fund_labels[:1] if (fund_labels and "fund_multi" not in st.session_state) else None,
     key="fund_multi",
+    placeholder="🔍 พิมพ์ชื่อกอง เช่น K-GA, กรุงศรี, S&P500, infrastructure...",
 )
 selected_proj_ids = [fund_options[lbl] for lbl in selected_labels if lbl in fund_options]
 
@@ -190,24 +175,37 @@ tab_nav, tab_perf = st.tabs(["📈 NAV รายวัน", "📊 Performance"])
 
 with tab_nav:
     today = date.today()
-    inception_dates = [_proj_id_inception(pid) for pid in selected_proj_ids]
-    earliest_inception = min(inception_dates) if inception_dates else INCEPTION_FALLBACK
 
-    use_inception = st.checkbox(
-        f"📅 ตั้งแต่เริ่มกองทุน (≈ {earliest_inception})",
-        value=False,
-        help="ดึงตั้งแต่ปีที่กองทุนเริ่ม (อ่านจาก proj_id) — อาจดึงนาน",
+    PRESETS = {
+        "6 เดือน": 180,
+        "1 ปี": 365,
+        "3 ปี": 365 * 3,
+        "5 ปี": 365 * 5,
+        "10 ปี": 365 * 10,
+    }
+    preset_choice = st.radio(
+        "📅 ช่วงเวลาด่วน",
+        list(PRESETS.keys()) + ["กำหนดเอง"],
+        index=3,  # default: 5 ปี
+        horizontal=True,
+        key="date_preset",
     )
 
+    if preset_choice in PRESETS:
+        default_start = today - timedelta(days=PRESETS[preset_choice])
+        custom = False
+    else:
+        default_start = today - timedelta(days=365)
+        custom = True
+
     d1, d2, d3 = st.columns([1, 1, 1])
-    default_start = earliest_inception if use_inception else today - timedelta(days=180)
     with d1:
         start = st.date_input(
             "เริ่ม",
             value=default_start,
             max_value=today,
-            key=f"nav_start_{use_inception}",
-            disabled=use_inception,
+            key=f"nav_start_{preset_choice}",
+            disabled=not custom,
         )
     with d2:
         end = st.date_input("ถึง", value=today, max_value=today, key="nav_end")
@@ -216,7 +214,7 @@ with tab_nav:
         st.write("")
         fetch_nav = st.button("⬇️ โหลด NAV", type="primary", use_container_width=True)
 
-    actual_start = earliest_inception if use_inception else start
+    actual_start = default_start if not custom else start
 
     if fetch_nav:
         if actual_start > end:
