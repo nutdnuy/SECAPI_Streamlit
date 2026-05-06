@@ -265,10 +265,29 @@ with tab_nav:
             if nav_df.empty:
                 st.warning("ไม่พบข้อมูล NAV ในช่วงเวลานี้")
             else:
-                st.success(f"พบข้อมูล {len(nav_df):,} แถว · {nav_df['proj_id'].nunique()} กอง")
+                st.session_state["nav_df"] = nav_df
 
+        nav_df = st.session_state.get("nav_df")
+        if nav_df is not None and not nav_df.empty:
+            st.success(f"พบข้อมูล {len(nav_df):,} แถว · {nav_df['proj_id'].nunique()} กอง")
+
+            if "class_abbr_name" in nav_df.columns:
+                class_options = sorted(nav_df["class_abbr_name"].dropna().astype(str).unique().tolist())
+                if class_options:
+                    selected_class = st.radio(
+                        f"🎯 เลือก share class · {len(class_options)} class",
+                        class_options,
+                        horizontal=True,
+                        key="class_filter",
+                    )
+                    nav_df = nav_df[nav_df["class_abbr_name"].astype(str) == selected_class]
+
+            if nav_df.empty:
+                st.info("ไม่มีข้อมูลตาม filter ที่เลือก")
+            else:
                 if {"nav_date", "last_val", "proj_id"}.issubset(nav_df.columns):
                     label_col = "class_abbr_name" if "class_abbr_name" in nav_df.columns else "proj_id"
+                    nav_df = nav_df.copy()
                     nav_df["_series"] = nav_df["proj_id"].astype(str) + " · " + nav_df[label_col].astype(str)
                     chart_df = nav_df.pivot_table(
                         index="nav_date", columns="_series", values="last_val", aggfunc="first"
@@ -287,6 +306,7 @@ with tab_nav:
                     file_name=fname,
                     mime="text/csv",
                     width="stretch",
+                    key="nav_download",
                 )
 
 with tab_perf:
