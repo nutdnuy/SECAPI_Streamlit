@@ -264,50 +264,54 @@ with tab_nav:
 
             if nav_df.empty:
                 st.warning("ไม่พบข้อมูล NAV ในช่วงเวลานี้")
+                st.session_state.pop("nav_df", None)
             else:
                 st.session_state["nav_df"] = nav_df
+                st.session_state["nav_range"] = (actual_start, end)
 
-        nav_df = st.session_state.get("nav_df")
-        if nav_df is not None and not nav_df.empty:
-            st.success(f"พบข้อมูล {len(nav_df):,} แถว · {nav_df['proj_id'].nunique()} กอง")
+    nav_df = st.session_state.get("nav_df")
+    if nav_df is not None and not nav_df.empty:
+        st.success(f"พบข้อมูล {len(nav_df):,} แถว · {nav_df['proj_id'].nunique()} กอง")
 
-            if "class_abbr_name" in nav_df.columns:
-                class_options = sorted(nav_df["class_abbr_name"].dropna().astype(str).unique().tolist())
-                if class_options:
-                    selected_class = st.radio(
-                        f"🎯 เลือก share class · {len(class_options)} class",
-                        class_options,
-                        horizontal=True,
-                        key="class_filter",
-                    )
-                    nav_df = nav_df[nav_df["class_abbr_name"].astype(str) == selected_class]
-
-            if nav_df.empty:
-                st.info("ไม่มีข้อมูลตาม filter ที่เลือก")
-            else:
-                if {"nav_date", "last_val", "proj_id"}.issubset(nav_df.columns):
-                    label_col = "class_abbr_name" if "class_abbr_name" in nav_df.columns else "proj_id"
-                    nav_df = nav_df.copy()
-                    nav_df["_series"] = nav_df["proj_id"].astype(str) + " · " + nav_df[label_col].astype(str)
-                    chart_df = nav_df.pivot_table(
-                        index="nav_date", columns="_series", values="last_val", aggfunc="first"
-                    )
-                    st.line_chart(chart_df, height=360)
-                    nav_df = nav_df.drop(columns=["_series"])
-
-                st.dataframe(nav_df, width="stretch", height=420)
-
-                buf = io.StringIO()
-                nav_df.to_csv(buf, index=False)
-                fname = f"NAV_{len(selected_proj_ids)}funds_{actual_start}_{end}.csv"
-                st.download_button(
-                    "💾 ดาวน์โหลด CSV",
-                    data=buf.getvalue(),
-                    file_name=fname,
-                    mime="text/csv",
-                    width="stretch",
-                    key="nav_download",
+        view_df = nav_df
+        if "class_abbr_name" in view_df.columns:
+            class_options = sorted(view_df["class_abbr_name"].dropna().astype(str).unique().tolist())
+            if class_options:
+                selected_class = st.radio(
+                    f"🎯 เลือก share class · {len(class_options)} class",
+                    class_options,
+                    horizontal=True,
+                    key="class_filter",
                 )
+                view_df = view_df[view_df["class_abbr_name"].astype(str) == selected_class]
+
+        if view_df.empty:
+            st.info("ไม่มีข้อมูลตาม filter ที่เลือก")
+        else:
+            if {"nav_date", "last_val", "proj_id"}.issubset(view_df.columns):
+                label_col = "class_abbr_name" if "class_abbr_name" in view_df.columns else "proj_id"
+                view_df = view_df.copy()
+                view_df["_series"] = view_df["proj_id"].astype(str) + " · " + view_df[label_col].astype(str)
+                chart_df = view_df.pivot_table(
+                    index="nav_date", columns="_series", values="last_val", aggfunc="first"
+                )
+                st.line_chart(chart_df, height=360)
+                view_df = view_df.drop(columns=["_series"])
+
+            st.dataframe(view_df, width="stretch", height=420)
+
+            buf = io.StringIO()
+            view_df.to_csv(buf, index=False)
+            rng = st.session_state.get("nav_range", (actual_start, end))
+            fname = f"NAV_{len(selected_proj_ids)}funds_{rng[0]}_{rng[1]}.csv"
+            st.download_button(
+                "💾 ดาวน์โหลด CSV",
+                data=buf.getvalue(),
+                file_name=fname,
+                mime="text/csv",
+                width="stretch",
+                key="nav_download",
+            )
 
 with tab_perf:
     st.caption("ตัวเลขผลการดำเนินงาน + ความผันผวน")
